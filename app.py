@@ -1,105 +1,111 @@
-from __future__ import annotations
-
-from pathlib import Path
-
+import streamlit as st
 import cv2
 import numpy as np
-import streamlit as st
 import tensorflow as tf
+from PIL import Image
+import time
+from pathlib import Path
 
-from src.config import MODELS_DIR
-from src.inference import run_full_pipeline_on_bgr
+# Import your custom pipeline modules
+from src.config import MODEL_OUTPUT_DIR, IMG_SIZE
+from src.segmentation import segment_stamp, preprocess_image
+from src.localization import extract_roi
+
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Document Stamp Verifier", page_icon="🔎", layout="wide")
 
 
-st.set_page_config(
-    page_title="Forged Stamp Recognizer",
-    page_icon="🖋️",
-    layout="wide",
-)
-
-
+# --- CACHE THE MODEL ---
+# This ensures the model only loads once, keeping the web app super fast!
 @st.cache_resource
-def load_model(model_path: str):
+def load_classifier():
+    model_path = MODEL_OUTPUT_DIR / "final_stamp_classifier.keras"
     return tf.keras.models.load_model(model_path)
 
 
-def image_bytes_to_bgr(uploaded_file) -> np.ndarray:
-    data = np.frombuffer(uploaded_file.getvalue(), dtype=np.uint8)
-    image_bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if image_bgr is None:
-        raise ValueError("Could not read the uploaded image")
-    return image_bgr
+model = load_classifier()
 
+# --- UI HEADER ---
+st.title("🔎 Image-Based Document Stamp Verification System")
+st.markdown("""
+Upload a scanned document containing an organizational stamp. The AI pipeline will automatically 
+locate the stamp, extract it, and analyze the microscopic texture to determine if it is a 
+**Genuine (Wet-Ink)** impression or a **Forged (Digitally Printed)** copy.
+""")
 
-st.title("Forged Stamp Recognizer")
-st.write(
-    "Upload a scanned document image and the app will detect the stamp region, classify it, and show the result."
+# --- FILE UPLOADER ---
+uploaded_file = st.file_uploader(
+    "Upload Scanned Document (PNG, JPG)", type=["png", "jpg", "jpeg"]
 )
 
-with st.sidebar:
-    st.header("Demo settings")
-    model_path = st.text_input(
-        "Model path",
-        value=str(MODELS_DIR / "stamp_resnet50_final.keras"),
-    )
-    display_width = st.slider("Processing width", min_value=600, max_value=1400, value=900, step=100)
-    threshold = st.slider("Decision threshold", min_value=0.05, max_value=0.95, value=0.25, step=0.05)
+if uploaded_file is not None:
+    # 1. Read the image into OpenCV format
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    image_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)  # type: ignore # For Streamlit display
 
-uploaded_file = st.file_uploader("Choose a document image", type=["png", "jpg", "jpeg", "webp"])
+    col1, col2, col3 = st.columns(3)
 
-if uploaded_file:
-    try:
-        image_bgr = image_bytes_to_bgr(uploaded_file)
-        model_file = Path(model_path)
-        if not model_file.exists():
-            st.error(f"Model not found: {model_file}")
-            st.stop()
+    with col1:
+        st.subheader("1. Original Document")
+        st.image(image_rgb, use_container_width=True)
 
-        with st.spinner("Running stamp detection..."):
-            model = load_model(str(model_file))
-            result = run_full_pipeline_on_bgr(
-                image_bgr=image_bgr,
-                model=model,
-                display_width=display_width,
-                decision_threshold=threshold,
-            )
-            if result["status"] != "ok":
-                st.error(result["message"])
-                st.stop()
+    with st.spinner("Running Computer Vision Pipeline..."):
+        try:
+            # 2. Run your pipeline exactly as trained
+            # Note: We skip `preprocess_image` resizing here if you want to show
+            # full resolution, or you can implement a modified resize just for the model.
+            h, w = image_bgr.shape[:2] # type: ignore
+            scale = 900 / w
+            resized_bgr = cv2.resize(image_bgr, (900, int(h * scale))) # type: ignore
 
-            roi_bgr = result["roi_bgr"]
-            roi_info = result["roi_info"]
-            annotated = result["annotated_bgr"]
-            raw_prob = float(result["raw_prob"])
+            mask = segment_stamp(resized_bgr)
+            roi = extract_roi(resized_bgr, mask)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Uploaded image")
-            st.image(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
+            if roi is None:
+                st.error(
+                    "Failed to detect a stamp in this image. Try another document."
+                )
+            else:
+                roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
 
-        with col2:
-            st.subheader("Detected stamp ROI")
-            st.image(cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
+                with col2:
+                    st.subheader("2. Extracted ROI")
+                    st.image(
+                        roi_rgb,
+                        use_container_width=True,
+                        caption="Hough Circle / Contour Crop",
+                    )
 
-        st.subheader("Prediction")
-        metric_col1, metric_col2, metric_col3 = st.columns(3)
-        metric_col1.metric("Verdict", result["class"])
-        metric_col2.metric("Confidence", f"{result['confidence'] * 100:.1f}%")
-        metric_col3.metric("Raw forged probability", f"{raw_prob * 100:.1f}%")
+                # 3. Model Inference
+                with col3:
+                    st.subheader("3. Forensic Analysis")
 
-        st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), caption="Annotated document", use_container_width=True)
+                    # Prepare image for ResNet50
+                    input_img = cv2.resize(roi_rgb, IMG_SIZE)
+                    input_array = np.expand_dims(input_img, axis=0)
 
-        with st.expander("Technical details"):
-            st.write({
-                "Bounding box": roi_info["bbox_original"],
-                "Threshold": threshold,
-                "Model": str(model_file),
-                "Raw forged probability": raw_prob,
-                "Inference ms": result["inference_ms"],
-                "Total ms": result["total_ms"],
-            })
+                    start_time = time.time()
+                    prediction_prob = model.predict(input_array, verbose=0)[0][0]
+                    inference_time = time.time() - start_time
 
-    except Exception as exc:
-        st.exception(exc)
-else:
-    st.info("Upload a stamp document image to start the demo.")
+                    # NOTE: Alphabetical loading mapping:
+                    # 0.0 to 0.49 = forged (Class 0)
+                    # 0.50 to 1.0 = genuine (Class 1)
+
+                    is_genuine = prediction_prob >= 0.5
+
+                    if is_genuine:
+                        st.success(f"✅ **GENUINE STAMP VERIFIED**")
+                        # If prediction is 0.95, it is 95% confident it's genuine
+                        confidence = prediction_prob * 100
+                    else:
+                        st.error(f"🚨 **FORGED STAMP DETECTED**")
+                        # If prediction is 0.05, it is 95% confident it's forged
+                        confidence = (1.0 - prediction_prob) * 100
+
+                    st.metric("Confidence Score", f"{confidence:.2f}%")
+                    st.caption(f"Inference Speed: {inference_time:.3f} seconds")
+
+        except Exception as e:
+            st.error(f"An error occurred during processing: {e}")
