@@ -1,5 +1,2 @@
-/outputs
-.venv
 
-# Jupyter auto-generated checkpoints
-**/.ipynb_checkpoints/
+.venv
