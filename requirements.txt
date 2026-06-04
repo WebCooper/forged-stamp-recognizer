@@ -113,6 +113,7 @@ setuptools==82.0.1
 six==1.17.0
 soupsieve==2.8.3
 stack-data==0.6.3
+streamlit>=1.36.0,<2.0.0
 tensorflow==2.21.0
 termcolor==3.3.0
 terminado==0.18.1
@@ -132,3 +133,4 @@ websocket-client==1.9.0
 wheel==0.47.0
 widgetsnbextension==4.0.15
 wrapt==2.1.2
+python-dotenv==1.1.1
