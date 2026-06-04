@@ -1,2 +1,7 @@
 
 .venv
+
+/outputs/models
+/outputs/roi_dataset_v3
+/outputs/reports
+
