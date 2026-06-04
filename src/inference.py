@@ -1,27 +1,4 @@
-"""
-inference.py
-============
-Member 4 — Deep Learning & Evaluation Lead
-EE7204 / EC7205 — Image Processing and Computer Vision
-University of Ruhuna
-
-Standalone inference script. Given a raw document image (not a pre-cropped ROI),
-this script runs the FULL pipeline:
-  1. Load and resize the document image
-  2. HSV segmentation + morphological cleaning  (re-implements Member 2's logic)
-  3. Contour-based ROI extraction               (re-implements Member 3's logic)
-  4. ResNet50 classifier                        (Member 4)
-  5. Print verdict + confidence
-
-Usage
------
-    python src/inference.py --image path/to/document.png \\
-                            --model outputs/models/stamp_resnet50_final.keras
-
-Or import as a module:
-    from src.inference import run_full_pipeline
-    result = run_full_pipeline("document.png", "model.keras")
-"""
+"""Shared inference utilities for stamp verification."""
 
 import argparse
 import time
@@ -32,14 +9,11 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.applications.resnet50 import preprocess_input
 
-# ── Constants ────────────────────────────────────────────────────────────────
-DISPLAY_WIDTH = 900     # Resize document to this width for processing
-IMG_SIZE      = 224     # ResNet50 input size
-CLASS_NAMES   = {0: "GENUINE", 1: "FORGED"}
-COLORS        = {0: (0, 200, 80), 1: (0, 60, 220)}   # BGR: green / red
+DISPLAY_WIDTH = 900
+IMG_SIZE = 224
+CLASS_NAMES = {0: "GENUINE", 1: "FORGED"}
+COLORS = {0: (0, 200, 80), 1: (0, 60, 220)}
 
-
-# ── Step 1: Segmentation (Member 2's pipeline, re-implemented for inference) ─
 
 def segment_stamp_mask(image_bgr: np.ndarray) -> np.ndarray:
     """
@@ -56,23 +30,19 @@ def segment_stamp_mask(image_bgr: np.ndarray) -> np.ndarray:
     s = image_hsv[:, :, 1]
     v = image_hsv[:, :, 2]
 
-    hue_mask = cv2.inRange(h, 90, 170)
-    sat_mask = cv2.inRange(s, 25, 255)
-    val_mask = cv2.inRange(v, 30, 255)   # avoid very dark noise
+    hue_mask = ((h >= 90) & (h <= 170)).astype(np.uint8) * 255
+    sat_mask = ((s >= 25) & (s <= 255)).astype(np.uint8) * 255
+    val_mask = ((v >= 30) & (v <= 255)).astype(np.uint8) * 255
     mask = cv2.bitwise_and(hue_mask, cv2.bitwise_and(sat_mask, val_mask))
 
-    # Morphological closing: fill gaps caused by uneven ink absorption
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
 
-    # Morphological opening: remove thin text/noise structures
     kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
 
     return mask
 
-
-# ── Step 2: ROI extraction (Member 3's pipeline, re-implemented) ─────────────
 
 def _contour_stamp_score(contour) -> dict | None:
     """
@@ -80,7 +50,7 @@ def _contour_stamp_score(contour) -> dict | None:
     Mirrors the scoring function from notebooks 03–04.
     """
     area = cv2.contourArea(contour)
-    if area < 500:         # too small
+    if area < 500:
         return None
 
     x, y, w, h = cv2.boundingRect(contour)
@@ -89,10 +59,9 @@ def _contour_stamp_score(contour) -> dict | None:
         return None
 
     aspect_ratio = w / h
-    compactness  = min(w, h) / max(w, h)
-    extent       = area / bbox_area
+    compactness = min(w, h) / max(w, h)
+    extent = area / bbox_area
 
-    # Reward compact (near-square), reasonably large, well-filled contours
     if aspect_ratio < 0.3 or aspect_ratio > 3.0:
         return None
 
@@ -128,15 +97,12 @@ def extract_stamp_roi(
     scale   = display_width / w0
     new_h   = int(h0 * scale)
 
-    # Resize for processing
     image_resized = cv2.resize(original_bgr, (display_width, new_h))
 
-    # Segment
     mask = segment_stamp_mask(image_resized)
 
-    # Find and score contours
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates  = []
+    candidates = []
     for cnt in contours:
         result = _contour_stamp_score(cnt)
         if result is not None:
@@ -145,17 +111,14 @@ def extract_stamp_roi(
     if not candidates:
         return None, None
 
-    # Take the highest-scoring contour
     best = sorted(candidates, key=lambda c: c["score"], reverse=True)[0]
 
-    # Scale bbox back to original resolution
     inv = 1.0 / scale
-    x  = int(best["x"] * inv)
-    y  = int(best["y"] * inv)
-    w  = int(best["w"] * inv)
-    h  = int(best["h"] * inv)
+    x = int(best["x"] * inv)
+    y = int(best["y"] * inv)
+    w = int(best["w"] * inv)
+    h = int(best["h"] * inv)
 
-    # Padded crop
     px = int(w * pad_factor)
     py = int(h * pad_factor)
     x1 = max(x - px, 0)
@@ -176,9 +139,11 @@ def extract_stamp_roi(
     return roi_bgr, info
 
 
-# ── Step 3: Classification ────────────────────────────────────────────────────
-
-def classify_roi(model: tf.keras.Model, roi_bgr: np.ndarray) -> dict:
+def classify_roi(
+    model: tf.keras.Model,
+    roi_bgr: np.ndarray,
+    decision_threshold: float = 0.5,
+) -> dict:
     """
     Run the trained ResNet50 classifier on a 224×224 BGR stamp ROI.
 
@@ -186,33 +151,107 @@ def classify_roi(model: tf.keras.Model, roi_bgr: np.ndarray) -> dict:
     -------
     dict with keys: class, confidence, raw_prob, inference_ms
     """
+    if roi_bgr is None or roi_bgr.size == 0:
+        raise ValueError("ROI image is empty and cannot be classified.")
+
+    if roi_bgr.shape[:2] != (IMG_SIZE, IMG_SIZE):
+        roi_bgr = cv2.resize(roi_bgr, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
+
     roi_rgb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
-    img     = preprocess_input(roi_rgb.astype(np.float32))
-    img     = np.expand_dims(img, axis=0)
+    img = preprocess_input(roi_rgb.astype(np.float32))
+    img = np.expand_dims(img, axis=0)
 
-    t0            = time.perf_counter()
-    prob_forged   = float(model.predict(img, verbose=0)[0, 0])
-    inference_ms  = (time.perf_counter() - t0) * 1000
+    t0 = time.perf_counter()
+    prob_forged = float(model.predict(img, verbose=0)[0, 0])
+    inference_ms = (time.perf_counter() - t0) * 1000
 
-    predicted_cls = 1 if prob_forged >= 0.5 else 0
-    confidence    = prob_forged if predicted_cls == 1 else 1.0 - prob_forged
+    predicted_cls = 1 if prob_forged >= decision_threshold else 0
+    confidence = prob_forged if predicted_cls == 1 else 1.0 - prob_forged
 
     return {
-        "class"        : CLASS_NAMES[predicted_cls],
-        "class_id"     : predicted_cls,
-        "confidence"   : round(confidence, 4),
-        "raw_prob"     : round(prob_forged, 4),
-        "inference_ms" : round(inference_ms, 2),
+        "class": CLASS_NAMES[predicted_cls],
+        "class_id": predicted_cls,
+        "confidence": round(confidence, 4),
+        "raw_prob": round(prob_forged, 4),
+        "inference_ms": round(inference_ms, 2),
+        "decision_threshold": decision_threshold,
     }
 
 
-# ── Full pipeline ─────────────────────────────────────────────────────────────
+def _annotate_detection(
+    image_bgr: np.ndarray,
+    roi_info: dict,
+    prediction: dict,
+) -> np.ndarray:
+    """Draw the detection box and verdict onto the original image."""
+    annotated = image_bgr.copy()
+    x1, y1, x2, y2 = roi_info["bbox_original"]
+    color = COLORS[prediction["class_id"]]
+    label = f"{prediction['class']} ({prediction['confidence'] * 100:.0f}%)"
+
+    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
+    (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+    y_text = max(y1 - text_h - 10, 0)
+    cv2.rectangle(annotated, (x1, y_text), (x1 + text_w + 10, y1), color, -1)
+    cv2.putText(
+        annotated,
+        label,
+        (x1 + 5, max(y1 - 5, text_h + 4)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2,
+    )
+    return annotated
+
+
+def run_full_pipeline_on_bgr(
+    image_bgr: np.ndarray,
+    model: tf.keras.Model,
+    display_width: int = DISPLAY_WIDTH,
+    decision_threshold: float = 0.5,
+) -> dict:
+    """Run the full pipeline on an already-loaded BGR image."""
+    t_total_start = time.perf_counter()
+
+    roi_bgr, roi_info = extract_stamp_roi(image_bgr, display_width=display_width)
+    if roi_bgr is None or roi_info is None:
+        return {
+            "status": "error",
+            "message": (
+                "No stamp region detected in the document. "
+                "Check that the document contains a visible colored stamp."
+            ),
+        }
+
+    prediction = classify_roi(model, roi_bgr, decision_threshold=decision_threshold)
+    total_ms = (time.perf_counter() - t_total_start) * 1000
+
+    annotated = _annotate_detection(image_bgr, roi_info, prediction)
+
+    result = {
+        "status": "ok",
+        "class": prediction["class"],
+        "class_id": prediction["class_id"],
+        "confidence": prediction["confidence"],
+        "raw_prob": prediction["raw_prob"],
+        "inference_ms": prediction["inference_ms"],
+        "total_ms": round(total_ms, 2),
+        "roi_bgr": roi_bgr,
+        "roi_info": roi_info,
+        "annotated_bgr": annotated,
+        "decision_threshold": decision_threshold,
+    }
+    return result
+
 
 def run_full_pipeline(
     image_path: str,
     model_path: str,
     save_annotated: str | None = None,
     verbose: bool = True,
+    display_width: int = DISPLAY_WIDTH,
+    decision_threshold: float = 0.5,
 ) -> dict:
     """
     Run the complete end-to-end stamp verification pipeline on a document image.
@@ -241,31 +280,18 @@ def run_full_pipeline(
           "message"     : str
         }
     """
-    t_total_start = time.perf_counter()
-
-    # Load image
     image_bgr = cv2.imread(str(image_path))
     if image_bgr is None:
         return {"status": "error", "message": f"Could not load image: {image_path}"}
 
-    # Load model
     model = tf.keras.models.load_model(str(model_path))
 
-    # Extract ROI
-    roi_bgr, roi_info = extract_stamp_roi(image_bgr)
-    if roi_bgr is None:
-        return {
-            "status" : "error",
-            "message": "No stamp region detected in the document. "
-                       "Check that the document contains a visible colored stamp.",
-        }
-
-    # Classify
-    result = classify_roi(model, roi_bgr)
-    total_ms = (time.perf_counter() - t_total_start) * 1000
-
-    result["status"]     = "ok"
-    result["total_ms"]   = round(total_ms, 2)
+    result = run_full_pipeline_on_bgr(
+        image_bgr=image_bgr,
+        model=model,
+        display_width=display_width,
+        decision_threshold=decision_threshold,
+    )
     result["image_path"] = str(image_path)
 
     if verbose:
@@ -278,32 +304,16 @@ def run_full_pipeline(
         print(f"  Confidence   : {result['confidence']*100:.1f}%")
         print(f"  P(forged)    : {result['raw_prob']:.4f}")
         print(f"  Inference    : {result['inference_ms']:.1f} ms")
-        print(f"  Total time   : {total_ms:.1f} ms (incl. I/O + segmentation)")
+        print(f"  Total time   : {result['total_ms']:.1f} ms (incl. I/O + segmentation)")
         print("=" * 52)
 
-    # Save annotated image
     if save_annotated:
-        annotated = image_bgr.copy()
-        x1, y1, x2, y2 = roi_info["bbox_original"]
-        color = COLORS[result["class_id"]]
-        label = f"{result['class']} ({result['confidence']*100:.0f}%)"
-
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
-
-        # Background for text
-        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-        cv2.rectangle(annotated, (x1, y1 - text_h - 10), (x1 + text_w + 10, y1), color, -1)
-        cv2.putText(annotated, label, (x1 + 5, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-        cv2.imwrite(save_annotated, annotated)
+        cv2.imwrite(save_annotated, result["annotated_bgr"])
         if verbose:
             print(f"  Annotated    : {save_annotated}")
 
     return result
 
-
-# ── CLI entry point ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

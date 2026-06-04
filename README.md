@@ -39,6 +39,7 @@ filters learn to discriminate these microscopic texture differences.
 
 ```
 forged-stamp-recognizer/
+├── app.py            — Streamlit upload-and-classify demo ★
 ├── notebooks/
 │   ├── 00_environment_check.ipynb          — Verify dependencies
 │   ├── 01_dataset_audit.ipynb              — Dataset statistics and samples
@@ -74,6 +75,18 @@ forged-stamp-recognizer/
 
 ```bash
 pip install -r requirements.txt
+```
+
+If you keep the dataset outside the repository, set `STAMP_DATASET_ROOT` before running the notebooks or training scripts:
+
+```bash
+set STAMP_DATASET_ROOT=D:\path\to\final_dataset
+```
+
+On PowerShell:
+
+```powershell
+$env:STAMP_DATASET_ROOT = "D:\path\to\final_dataset"
 ```
 
 ### Google Colab workflow (recommended for GPU training)
@@ -127,6 +140,26 @@ clf = StampClassifier.load("outputs/models/stamp_resnet50_final.keras")
 result = clf.predict_single("path/to/stamp_roi.png")
 # {'class': 'genuine', 'confidence': 0.9734, 'raw_prob': 0.0266, 'inference_ms': 14.2}
 ```
+
+### Streamlit Demo
+
+For assessment and live demonstration, run the upload UI:
+
+```bash
+streamlit run app.py
+```
+
+The demo lets you upload a document image, runs the shared detection/classification pipeline, and shows the final verdict with the detected ROI and annotated output.
+
+If the final trained model is not already present, place it in `outputs/models/stamp_resnet50_final.keras` or update the path in the sidebar.
+
+### Submission Checklist
+
+- Run `notebooks/04_generate_roi_dataset.ipynb` before training if the ROI dataset is not present.
+- Run `notebooks/05_train_classifier_documented.ipynb` to regenerate the model artifact.
+- Run `notebooks/06_evaluation.ipynb` to regenerate figures and metrics.
+- Use `streamlit run app.py` for the live demo.
+- Use `python src/inference.py --image ... --model ... --save ...` for CLI-based verification.
 
 ---
 

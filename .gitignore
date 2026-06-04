@@ -5,3 +5,6 @@
 /outputs/roi_dataset_v3
 /outputs/reports
 
+src/_pycache__
+
+.env
