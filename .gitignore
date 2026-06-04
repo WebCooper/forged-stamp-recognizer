@@ -1,10 +1,30 @@
-
-.venv
-
-/outputs/models
-/outputs/roi_dataset_v3
-/outputs/reports
-
-src/_pycache__
-
+# Environments
 .env
+.venv/
+env/
+venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data & Outputs (Crucial: Prevents uploading large datasets)
+final_dataset/
+outputs/
+*.png
+*.jpg
+*.jpeg
+
+# Deep Learning Models
+*.h5
+*.keras
+*.pb
+*.tflite
+
+# OS generated files
+.DS_Store
+Thumbs.db
