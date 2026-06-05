@@ -1,36 +1,95 @@
 import cv2
-from src.config import ROI_SIZE
+import numpy as np
+from src.config import ROI_SIZE, DISPLAY_WIDTH
+
+
+def contour_stamp_score(contour):
+    """Scores candidates based on compactness, extent, and circularity (from Notebook 04)."""
+    area = cv2.contourArea(contour)
+    if area <= 0:
+        return None
+
+    x, y, w, h = cv2.boundingRect(contour)
+    bbox_area = w * h
+    if bbox_area <= 0:
+        return None
+
+    aspect_ratio = w / h
+    compactness = min(w, h) / max(w, h)
+    extent = area / bbox_area
+
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter <= 0:
+        circularity = 0
+    else:
+        circularity = (4 * np.pi * area) / (perimeter**2)
+
+    # Basic rejection rules
+    if area < 200:
+        return None
+    if compactness < 0.35:
+        return None
+
+    # Weighted score (Fulfills the Geometric Localization requirement)
+    score = 0.45 * compactness + 0.35 * circularity + 0.20 * extent
+
+    return {"x": x, "y": y, "w": w, "h": h, "score": score}
 
 
 def extract_roi(image_bgr, mask):
-    """Finds the geometric center of the stamp and crops an ROI."""
-    # Canny Edge Detection to define boundaries
-    edges = cv2.Canny(mask, 50, 150)
+    """
+    Extracts the highest scoring stamp, maps it back to the original
+    high-resolution image, and crops it with a pad factor.
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Find contours
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    for contour in contours:
+        result = contour_stamp_score(contour)
+        if result is not None:
+            candidates.append(result)
 
-    if not contours:
+    candidates = sorted(candidates, key=lambda item: item["score"], reverse=True)
+
+    if not candidates:
         return None
 
-    # Assume the largest contour by area is the stamp
-    largest_contour = max(contours, key=cv2.contourArea)
-    x, y, w, h = cv2.boundingRect(largest_contour)
+    best = candidates[0]
 
-    # Calculate center
-    center_x, center_y = x + w // 2, y + h // 2
+    # Map back to original image coordinates
+    original_h, original_w = image_bgr.shape[:2]
+    resized_h = mask.shape[0]
 
-    # Calculate crop coordinates ensuring a square ROI
-    half_size = ROI_SIZE // 2
-    x1 = max(0, center_x - half_size)
-    y1 = max(0, center_y - half_size)
-    x2 = min(image_bgr.shape[1], center_x + half_size)
-    y2 = min(image_bgr.shape[0], center_y + half_size)
+    scale_x = original_w / DISPLAY_WIDTH
+    scale_y = original_h / resized_h
 
-    roi = image_bgr[y1:y2, x1:x2]
+    x, y, w, h = best["x"], best["y"], best["w"], best["h"]
 
-    # Pad if ROI is smaller than expected due to image borders
-    if roi.shape[:2] != (ROI_SIZE, ROI_SIZE):
-        roi = cv2.resize(roi, (ROI_SIZE, ROI_SIZE))
+    # Notebook 04 Padding Factor
+    pad_factor = 1.0
+    pad_x = int(w * pad_factor)
+    pad_y = int(h * pad_factor)
 
-    return roi
+    # Bounding box in resized coordinates
+    x1 = max(x - pad_x, 0)
+    y1 = max(y - pad_y, 0)
+    x2 = min(x + w + pad_x, DISPLAY_WIDTH)
+    y2 = min(y + h + pad_y, resized_h)
+
+    # Convert to original coordinates
+    ox1 = int(x1 * scale_x)
+    oy1 = int(y1 * scale_y)
+    ox2 = int(x2 * scale_x)
+    oy2 = int(y2 * scale_y)
+
+    roi_original = image_bgr[oy1:oy2, ox1:ox2]
+
+    if roi_original.size == 0:
+        return None
+
+    # Standardize ROI to expected model size
+    roi_resized = cv2.resize(
+        roi_original, (ROI_SIZE, ROI_SIZE), interpolation=cv2.INTER_AREA
+    )
+
+    return roi_resized
