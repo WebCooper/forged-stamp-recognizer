@@ -1,36 +1,30 @@
 from pathlib import Path
 
-# Dataset root
-DATASET_ROOT = Path(r"H:\UOR\7th sem\Computer Vision\final_dataset")
+# Base Paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATASET_ROOT = BASE_DIR / "final_dataset"
 
-# Class mapping
-CLASS_MAPPING = {
-    "class_0_genuine": 0,
-    "class_1_forged": 1
-}
+# New Pipeline Folders
+RAW_ROI_DIR = BASE_DIR / "outputs" / "raw_rois"  # Step 1: Holds initial crops
+BALANCED_ROI_DIR = (
+    BASE_DIR / "outputs" / "balanced_rois"
+)  # Step 3: Holds final training data
+MODEL_OUTPUT_DIR = BASE_DIR / "outputs" / "models"
 
-LABEL_NAMES = {
-    0: "genuine",
-    1: "forged"
-}
+# Ensure directories exist
+for folder in ["genuine", "forged"]:
+    (RAW_ROI_DIR / folder).mkdir(parents=True, exist_ok=True)
+    (BALANCED_ROI_DIR / folder).mkdir(parents=True, exist_ok=True)
+MODEL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Project paths
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Computer Vision Hyperparameters
+DISPLAY_WIDTH = 900
+ROI_SIZE = 224
 
-OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-SEGMENTATION_DEBUG_DIR = OUTPUTS_DIR / "segmentation_debug"
-ROI_CROPS_DIR = OUTPUTS_DIR / "roi_crops"
-MODELS_DIR = OUTPUTS_DIR / "models"
-FIGURES_DIR = OUTPUTS_DIR / "figures"
-REPORTS_DIR = OUTPUTS_DIR / "reports"
-
-# Create output folders if missing
-for folder in [
-    OUTPUTS_DIR,
-    SEGMENTATION_DEBUG_DIR,
-    ROI_CROPS_DIR,
-    MODELS_DIR,
-    FIGURES_DIR,
-    REPORTS_DIR,
-]:
-    folder.mkdir(parents=True, exist_ok=True)
+# Deep Learning Hyperparameters
+IMG_SIZE = (224, 224)
+BATCH_SIZE = 16
+SEED = 42
+EPOCHS_BASE = 15
+EPOCHS_FINETUNE = 10
+TARGET_CLASS_SIZE = 1200  # For dataset balancing

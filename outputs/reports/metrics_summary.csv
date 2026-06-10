@@ -1,0 +1,16 @@
+,Value
+Model,ResNet50 (Transfer Learning + Fine-Tuning)
+Test set size,78
+Accuracy,0.7179
+Precision,0.8462
+Recall,0.3548
+F1-score,0.5000
+ROC-AUC,0.8936
+Average Precision,0.8152
+True Positives,11
+True Negatives,45
+False Positives,2
+False Negatives,20
+Inference mean ms,158.2
+Inference std ms,20.5
+Throughput img/s,6.3
