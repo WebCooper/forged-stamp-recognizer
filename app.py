@@ -52,12 +52,9 @@ if uploaded_file is not None:
 
     with st.spinner("Running Computer Vision Pipeline..."):
         try:
-            # 2. Run your pipeline exactly as trained
-            # Note: We skip `preprocess_image` resizing here if you want to show
-            # full resolution, or you can implement a modified resize just for the model.
-            h, w = image_bgr.shape[:2] # type: ignore
+            h, w = image_bgr.shape[:2]
             scale = 900 / w
-            resized_bgr = cv2.resize(image_bgr, (900, int(h * scale))) # type: ignore
+            resized_bgr = cv2.resize(image_bgr, (900, int(h * scale)))
 
             mask = segment_stamp(resized_bgr)
             roi = extract_roi(resized_bgr, mask)
@@ -69,12 +66,16 @@ if uploaded_file is not None:
             else:
                 roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
 
+                # Prepare image for ResNet50 FIRST so we can display it
+                input_img = cv2.resize(roi_rgb, IMG_SIZE)
+
                 with col2:
                     st.subheader("2. Extracted ROI")
+                    # Set use_container_width=False to prevent stretching/blurring
                     st.image(
-                        roi_rgb,
-                        use_container_width=True,
-                        caption="Hough Circle / Contour Crop",
+                        input_img,
+                        use_container_width=False,
+                        caption=f"Model Feed {IMG_SIZE}",
                     )
 
                 # 3. Model Inference
