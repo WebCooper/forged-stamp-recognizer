@@ -17,8 +17,6 @@ from src.evaluate import evaluate_model
 
 
 def run_pipeline():
-    # Print some cool ASCII art headers to make the terminal output look professional 
-    # for when we present this to our project advisor.
     print("=" * 50)
     print("   FORGED STAMP RECOGNIZER - MASTER PIPELINE   ")
     print("=" * 50)
@@ -61,7 +59,7 @@ def run_pipeline():
     # ---------------------------------------------------------
     # STEP 4: Train the ResNet50 Model
     # ---------------------------------------------------------
-    # Time to train the heavy model. We are using transfer learning with ResNet50
+    # We are using transfer learning with ResNet50
     # because it converges way faster than our custom CNN models.
     print("\n[STEP 4/5] Training the Deep Learning Classifier...")
     train_model()
@@ -69,7 +67,7 @@ def run_pipeline():
     # ---------------------------------------------------------
     # STEP 5: Evaluate Performance
     # ---------------------------------------------------------
-    # Finally, let's see how our model actually does on the validation set.
+    # how our model actually does on the validation set.
     # Prints out precision, recall, f1-score, and the confusion matrix.
     print("\n[STEP 5/5] Evaluating Model Performance...")
     evaluate_model()
