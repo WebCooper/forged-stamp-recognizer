@@ -19,7 +19,16 @@ def preprocess_image(image_path):
     return image_bgr
 
 
-def segment_stamp(image_bgr):
+def segment_stamp(
+    image_bgr,
+    return_intermediates=False,
+    h_min=90,
+    h_max=170,
+    s_min=25,
+    s_max=255,
+    v_min=30,
+    v_max=255,
+):
     """
     Applies precise HSV thresholding and morphology.
     Returns the processed binary mask.
@@ -43,17 +52,16 @@ def segment_stamp(image_bgr):
     s = image_hsv[:, :, 1]
     v = image_hsv[:, :, 2]
 
-    # Exact HSV ranges from our experimented values.
-    # Blue/purple ink usually falls in Hue 90 to 170.
-    hue_mask = cv2.inRange(h, 90, 170)
-    sat_mask = cv2.inRange(s, 25, 255) # Ignore greyish/white backgrounds
-    val_mask = cv2.inRange(v, 30, 255) # Ignore extremely dark/black shadows
+    # Exact HSV ranges from Notebook 04 (or dynamic arguments)
+    hue_mask = cv2.inRange(h, h_min, h_max)
+    sat_mask = cv2.inRange(s, s_min, s_max) # Ignore greyish/white backgrounds
+    val_mask = cv2.inRange(v, v_min, v_max) # Ignore extremely dark/black shadows
 
     # Combine all masks together using bitwise AND operations
     mask = cv2.bitwise_and(hue_mask, sat_mask)
     mask = cv2.bitwise_and(mask, val_mask)
 
-    # Exact Morphology kernels.
+    # Exact Morphology kernels from Notebook 04
     # We use Elliptical structuring elements because stamps are circular/oval shaped.
     kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
@@ -66,6 +74,9 @@ def segment_stamp(image_bgr):
     # This fills in tiny black gaps/cracks inside the stamp where the wet ink did not touch 
     # the paper. Ensures we get a solid, continuous shape for contour detection!
     mask_cleaned = cv2.morphologyEx(mask_opened, cv2.MORPH_CLOSE, kernel_close)
+
+    if return_intermediates:
+        return mask, mask_opened, mask_cleaned
 
     return mask_cleaned
 
